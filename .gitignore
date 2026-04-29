@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# yolo dataset
+yolo_dataset/
+yolo_dataset_vis_out/
