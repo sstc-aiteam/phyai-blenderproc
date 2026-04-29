@@ -4,7 +4,7 @@ Usage:
     python visualize_yolo_dataset.py                                 # random 16 images, show window
     python visualize_yolo_dataset.py --split val                     # val split only
     python visualize_yolo_dataset.py --n 32                          # show 32 images
-    python visualize_yolo_dataset.py --save yolo_dataset_vis_out # save to folder instead of showing
+    python visualize_yolo_dataset.py --save yolo_dataset_vis_out     # save to folder instead of showing
     python visualize_yolo_dataset.py --all                           # save every image
 """
 
