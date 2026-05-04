@@ -1,4 +1,5 @@
 # phyai-blenderproc
+This repository, phyai-blenderproc, provides tools for generating and visualizing YOLO (You Only Look Once) format datasets using BlenderProc. It's designed to create synthetic image datasets with corresponding bounding box annotations for 3D models, which can be highly beneficial for training object detection models when real-world data is scarce or expensive to acquire.
 
 ## Quick Start
 ### Installation
