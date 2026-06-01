@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import os
 import random
 from pathlib import Path
 
@@ -140,10 +141,17 @@ def main():
         scale = max_w / grid.shape[1]
         grid = cv2.resize(grid, (max_w, int(grid.shape[0] * scale)))
 
-    cv2.imshow("YOLO Dataset Verification", grid)
-    print("Press any key to close.")
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if has_display:
+        cv2.imshow("YOLO Dataset Verification", grid)
+        print("Press any key to close.")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    else:
+        out_path = VISUALIZE_OUT_DIR / "grid_preview.jpg"
+        VISUALIZE_OUT_DIR.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out_path), grid)
+        print(f"No display detected — saved grid to {out_path}")
 
 
 if __name__ == "__main__":
