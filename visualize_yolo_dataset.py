@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 import yaml
 
-DATASET_DIR = Path(__file__).parent / "yolo_dataset"
+DATASET_DIR = Path(__file__).parent / "yolo_dataset_mask"
 VISUALIZE_OUT_DIR = Path(__file__).parent / "yolo_dataset_vis_out"
 BOX_COLOR   = (0, 255, 0)   # green
 TEXT_COLOR  = (255, 255, 255)
@@ -97,6 +97,7 @@ def main():
     parser.add_argument("--save",    type=Path, nargs="?", const=VISUALIZE_OUT_DIR, default=None, help="output directory (default: yolo_dataset_vis_out)")
     parser.add_argument("--all",     action="store_true", help="process and save every image")
     parser.add_argument("--cols",    type=int, default=4, help="grid columns")
+    parser.add_argument("--width",   type=int, default=3840, help="max output grid width in pixels (default: 3840)")
     args = parser.parse_args()
 
     class_names = load_class_names(args.dataset)
@@ -135,8 +136,8 @@ def main():
 
     grid = make_grid(annotated, cols=args.cols)
 
-    # Scale down if grid is too wide for the screen
-    max_w = 1600
+    # Scale down if grid exceeds the requested max width
+    max_w = args.width
     if grid.shape[1] > max_w:
         scale = max_w / grid.shape[1]
         grid = cv2.resize(grid, (max_w, int(grid.shape[0] * scale)))
@@ -150,7 +151,7 @@ def main():
     else:
         out_path = VISUALIZE_OUT_DIR / "grid_preview.jpg"
         VISUALIZE_OUT_DIR.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(out_path), grid)
+        cv2.imwrite(str(out_path), grid, [cv2.IMWRITE_JPEG_QUALITY, 95])
         print(f"No display detected — saved grid to {out_path}")
 
 
