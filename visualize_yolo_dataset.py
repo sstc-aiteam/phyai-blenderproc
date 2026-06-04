@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 import yaml
 
-DATASET_DIR = Path(__file__).parent / "yolo_dataset_mask"
+DATASET_DIR = Path(__file__).parent / "yolo_dataset"
 VISUALIZE_OUT_DIR = Path(__file__).parent / "yolo_dataset_vis_out"
 BOX_COLOR   = (0, 255, 0)   # green
 TEXT_COLOR  = (255, 255, 255)
