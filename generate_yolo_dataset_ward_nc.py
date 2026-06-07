@@ -17,7 +17,7 @@ TARGETS = [
     ("waterproof_bandages_ppb", 1, 2, True),
     ("ac_remotecontrol",        2, 3, True),
     ("syringe_nipro",           3, 4, True),
-    ("cotton_swabs",            4, 5, True),
+    ("cotton_swabs_ppb",        4, 5, True),
     ("paracetamol",             5, 6, True),
     ("bottle_alcohol_spray",    6, 7, False),
 ]
@@ -28,7 +28,7 @@ IMAGE_WIDTH     = 640
 IMAGE_HEIGHT    = 640
 RENDER_SAMPLES  = 128
 
-# Camera: 3 distances × (3 elevations × 8 azimuths + 6 near-zenith) = 3 × 30 = 90 poses per orientation
+# Camera: 3 distances × (3 elevations × 6 azimuths + 6 near-zenith) = 3 × 24 = 82 poses per orientation
 ELEVATIONS_DEG  = [30, 50, 70]
 NUM_AZIMUTHS    = 6
 TOP_DOWN_EL_DEG = 75
