@@ -6,6 +6,7 @@ Usage:
     python visualize_yolo_dataset.py --n 32                          # show 32 images
     python visualize_yolo_dataset.py --save yolo_dataset_vis_out     # save to folder instead of showing
     python visualize_yolo_dataset.py --all                           # save every image
+    python visualize_yolo_dataset.py --image train/img_001.jpg       # visualize one image
 """
 
 import argparse
@@ -145,11 +146,52 @@ def main():
     parser.add_argument("--cols",    type=int, default=4, help="grid columns")
     parser.add_argument("--width",   type=int, default=3840,
                         help="max output grid width in pixels (default: 3840)")
+    parser.add_argument("--image",   type=str, default=None,
+                        help="visualize a single image by name (e.g. train/img_001.jpg or just img_001.jpg)")
     args = parser.parse_args()
 
     class_names, task = load_dataset_meta(args.dataset)
     print(f"Task:    {task}")
     print(f"Classes: {class_names}")
+
+    if args.image:
+        # Resolve the image: accept an absolute path, a relative path from CWD,
+        # or a bare filename searched under images/{train,val}/
+        img_path = Path(args.image)
+        if not img_path.is_absolute():
+            candidate = args.dataset / "images" / img_path
+            if candidate.exists():
+                img_path = candidate
+            else:
+                matches = list(args.dataset.rglob(img_path.name))
+                if not matches:
+                    print(f"Image not found: {args.image}")
+                    return
+                img_path = matches[0]
+        lbl_path = args.dataset / "labels" / img_path.parent.name / img_path.with_suffix(".txt").name
+        img = cv2.imread(str(img_path))
+        if img is None:
+            print(f"Could not read image: {img_path}")
+            return
+        vis = draw_annotations(img, lbl_path, class_names, task)
+        if args.save:
+            args.save.mkdir(parents=True, exist_ok=True)
+            out = args.save / img_path.name
+            cv2.imwrite(str(out), vis)
+            print(f"Saved to {out}")
+        else:
+            has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+            if has_display:
+                cv2.imshow(img_path.name, vis)
+                print("Press any key to close.")
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+            else:
+                out_path = VISUALIZE_OUT_DIR / img_path.name
+                VISUALIZE_OUT_DIR.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(out_path), vis, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                print(f"No display detected — saved to {out_path}")
+        return
 
     pairs = collect_pairs(args.dataset, args.split)
     print(f"Found {len(pairs)} images")
