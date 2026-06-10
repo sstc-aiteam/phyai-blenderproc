@@ -1,5 +1,6 @@
 import blenderproc as bproc
 import bpy
+import argparse
 import numpy as np
 import os
 import cv2
@@ -67,6 +68,22 @@ def yolo_bbox(seg: np.ndarray, cat_id: int, W: int, H: int):
     return float(cx), float(cy), float(bw), float(bh)
 
 
+def yolo_seg(seg: np.ndarray, cat_id: int, W: int, H: int):
+    mask = (seg == cat_id).astype(np.uint8) * 255
+    if int(mask.sum() // 255) < MIN_MASK_PIXELS:
+        return None
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    contour = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(contour) < MIN_MASK_PIXELS:
+        return None
+    pts = contour.reshape(-1, 2).astype(float)
+    pts[:, 0] /= W
+    pts[:, 1] /= H
+    return pts.flatten().tolist()
+
+
 def register_camera_poses(center: np.ndarray, diag: float):
     """Add one full orbit ring of camera poses around `center`."""
     azimuths = np.linspace(0, 2 * np.pi, NUM_AZIMUTHS, endpoint=False)
@@ -124,6 +141,13 @@ def apply_z_flip(mask_objs, floor_z: float):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task", choices=["detect", "segment"], default="detect",
+                        help="detect: bounding-box labels; segment: polygon-mask labels")
+    args, _ = parser.parse_known_args()
+    task = args.task
+    print(f"[INFO] Task: {task}")
+
     bproc.init()
 
     for split in ("train", "val"):
@@ -238,10 +262,15 @@ def main():
     for img, seg in zip(all_colors, all_segs):
         annotations = []
         for tname, yolo_id, cat_id, _ in TARGETS:
-            bbox = yolo_bbox(seg, cat_id, IMAGE_WIDTH, IMAGE_HEIGHT)
-            if bbox is not None:
-                cx, cy, bw, bh = bbox
-                annotations.append((yolo_id, cx, cy, bw, bh))
+            if task == "segment":
+                pts = yolo_seg(seg, cat_id, IMAGE_WIDTH, IMAGE_HEIGHT)
+                if pts is not None:
+                    annotations.append((yolo_id, pts))
+            else:
+                bbox = yolo_bbox(seg, cat_id, IMAGE_WIDTH, IMAGE_HEIGHT)
+                if bbox is not None:
+                    cx, cy, bw, bh = bbox
+                    annotations.append((yolo_id, cx, cy, bw, bh))
         if annotations:
             valid_frames.append((img, annotations))
 
@@ -265,8 +294,14 @@ def main():
             [cv2.IMWRITE_JPEG_QUALITY, 95],
         )
         with open(f"{OUTPUT_DIR}/labels/{split}/{stem}.txt", "w") as f:
-            for yolo_id, cx, cy, bw, bh in annotations:
-                f.write(f"{yolo_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
+            for ann in annotations:
+                if task == "segment":
+                    yolo_id, pts = ann
+                    coords = " ".join(f"{v:.6f}" for v in pts)
+                    f.write(f"{yolo_id} {coords}\n")
+                else:
+                    yolo_id, cx, cy, bw, bh = ann
+                    f.write(f"{yolo_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
 
         saved[split] += 1
 
@@ -274,6 +309,7 @@ def main():
     yaml_path = f"{OUTPUT_DIR}/dataset.yaml"
     with open(yaml_path, "w") as f:
         f.write(f"# Auto-generated YOLO dataset — {', '.join(CLASS_NAMES)}\n")
+        f.write(f"task: {task}\n")
         f.write(f"path: {os.path.abspath(OUTPUT_DIR)}\n")
         f.write("train: images/train\n")
         f.write("val:   images/val\n\n")

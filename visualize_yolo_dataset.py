@@ -19,21 +19,38 @@ import yaml
 
 DATASET_DIR = Path(__file__).parent / "yolo_dataset"
 VISUALIZE_OUT_DIR = Path(__file__).parent / "yolo_dataset_vis_out"
-BOX_COLOR   = (0, 255, 0)   # green
 TEXT_COLOR  = (255, 255, 255)
 FONT        = cv2.FONT_HERSHEY_SIMPLEX
 FONT_SCALE  = 0.55
 THICKNESS   = 2
 
+# Distinct per-class colors (BGR)
+CLASS_COLORS = [
+    (0, 255, 0),
+    (255, 80, 80),
+    (80, 80, 255),
+    (0, 220, 220),
+    (220, 0, 220),
+    (220, 220, 0),
+    (255, 140, 0),
+    (0, 165, 255),
+]
 
-def load_class_names(dataset_dir: Path) -> list[str]:
+
+def class_color(cls_id: int) -> tuple[int, int, int]:
+    return CLASS_COLORS[cls_id % len(CLASS_COLORS)]
+
+
+def load_dataset_meta(dataset_dir: Path) -> tuple[list[str], str]:
+    """Return (class_names, task) from dataset.yaml. task defaults to 'detect'."""
     yaml_path = dataset_dir / "dataset.yaml"
     with open(yaml_path) as f:
         data = yaml.safe_load(f)
-    return data.get("names", [])
+    return data.get("names", []), data.get("task", "detect")
 
 
-def draw_boxes(img: np.ndarray, label_path: Path, class_names: list[str]) -> np.ndarray:
+def draw_annotations(img: np.ndarray, label_path: Path,
+                     class_names: list[str], task: str) -> np.ndarray:
     H, W = img.shape[:2]
     img = img.copy()
 
@@ -45,32 +62,60 @@ def draw_boxes(img: np.ndarray, label_path: Path, class_names: list[str]) -> np.
 
     for line in lines:
         parts = line.split()
-        if len(parts) != 5:
+        if len(parts) < 5:
             continue
-        cls_id, cx, cy, bw, bh = int(parts[0]), *map(float, parts[1:])
+        cls_id = int(parts[0])
+        color  = class_color(cls_id)
+        label  = class_names[cls_id] if cls_id < len(class_names) else str(cls_id)
 
-        x1 = int((cx - bw / 2) * W)
-        y1 = int((cy - bh / 2) * H)
-        x2 = int((cx + bw / 2) * W)
-        y2 = int((cy + bh / 2) * H)
+        if task == "segment" and len(parts) > 5:
+            coords = list(map(float, parts[1:]))
+            pts = np.array(coords, dtype=np.float32).reshape(-1, 2)
+            pts[:, 0] *= W
+            pts[:, 1] *= H
+            pts = pts.astype(np.int32)
 
-        cv2.rectangle(img, (x1, y1), (x2, y2), BOX_COLOR, THICKNESS)
+            # Semi-transparent filled mask
+            overlay = img.copy()
+            cv2.fillPoly(overlay, [pts], color)
+            cv2.addWeighted(overlay, 0.35, img, 0.65, 0, img)
 
-        label = class_names[cls_id] if cls_id < len(class_names) else str(cls_id)
-        (tw, th), baseline = cv2.getTextSize(label, FONT, FONT_SCALE, THICKNESS)
-        ty = max(y1 - 4, th + 4)
-        cv2.rectangle(img, (x1, ty - th - 4), (x1 + tw + 4, ty + baseline), BOX_COLOR, -1)
-        cv2.putText(img, label, (x1 + 2, ty), FONT, FONT_SCALE, TEXT_COLOR, THICKNESS, cv2.LINE_AA)
+            # Polygon outline
+            cv2.polylines(img, [pts], isClosed=True, color=color, thickness=THICKNESS)
+
+            # Label at top of bounding rect
+            x, y, bw, bh = cv2.boundingRect(pts)
+            _draw_label(img, label, x, y, color)
+
+        else:
+            # Bounding-box detection format
+            if len(parts) != 5:
+                continue
+            cx, cy, bw, bh = map(float, parts[1:])
+            x1 = int((cx - bw / 2) * W)
+            y1 = int((cy - bh / 2) * H)
+            x2 = int((cx + bw / 2) * W)
+            y2 = int((cy + bh / 2) * H)
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, THICKNESS)
+            _draw_label(img, label, x1, y1, color)
 
     return img
+
+
+def _draw_label(img: np.ndarray, label: str, x: int, y: int,
+                color: tuple[int, int, int]) -> None:
+    (tw, th), baseline = cv2.getTextSize(label, FONT, FONT_SCALE, THICKNESS)
+    ty = max(y - 4, th + 4)
+    cv2.rectangle(img, (x, ty - th - 4), (x + tw + 4, ty + baseline), color, -1)
+    cv2.putText(img, label, (x + 2, ty), FONT, FONT_SCALE, TEXT_COLOR, THICKNESS, cv2.LINE_AA)
 
 
 def collect_pairs(dataset_dir: Path, split: str | None) -> list[tuple[Path, Path]]:
     splits = [split] if split else ["train", "val"]
     pairs = []
     for s in splits:
-        img_dir   = dataset_dir / "images" / s
-        lbl_dir   = dataset_dir / "labels" / s
+        img_dir = dataset_dir / "images" / s
+        lbl_dir = dataset_dir / "labels" / s
         if not img_dir.exists():
             continue
         for img_path in sorted(img_dir.glob("*.jpg")):
@@ -90,17 +135,20 @@ def make_grid(images: list[np.ndarray], cols: int = 4) -> np.ndarray:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize YOLO dataset bounding boxes")
+    parser = argparse.ArgumentParser(description="Visualize YOLO dataset annotations")
     parser.add_argument("--dataset", type=Path, default=DATASET_DIR)
     parser.add_argument("--split",   choices=["train", "val"], default=None)
     parser.add_argument("--n",       type=int, default=16, help="number of images in grid")
-    parser.add_argument("--save",    type=Path, nargs="?", const=VISUALIZE_OUT_DIR, default=None, help="output directory (default: yolo_dataset_vis_out)")
+    parser.add_argument("--save",    type=Path, nargs="?", const=VISUALIZE_OUT_DIR,
+                        default=None, help="output directory (default: yolo_dataset_vis_out)")
     parser.add_argument("--all",     action="store_true", help="process and save every image")
     parser.add_argument("--cols",    type=int, default=4, help="grid columns")
-    parser.add_argument("--width",   type=int, default=3840, help="max output grid width in pixels (default: 3840)")
+    parser.add_argument("--width",   type=int, default=3840,
+                        help="max output grid width in pixels (default: 3840)")
     args = parser.parse_args()
 
-    class_names = load_class_names(args.dataset)
+    class_names, task = load_dataset_meta(args.dataset)
+    print(f"Task:    {task}")
     print(f"Classes: {class_names}")
 
     pairs = collect_pairs(args.dataset, args.split)
@@ -118,7 +166,7 @@ def main():
             img = cv2.imread(str(img_path))
             if img is None:
                 continue
-            vis = draw_boxes(img, lbl_path, class_names)
+            vis = draw_annotations(img, lbl_path, class_names, task)
             out = save_dir / f"{img_path.parent.name}_{img_path.name}"
             cv2.imwrite(str(out), vis)
 
@@ -132,11 +180,10 @@ def main():
         img = cv2.imread(str(img_path))
         if img is None:
             continue
-        annotated.append(draw_boxes(img, lbl_path, class_names))
+        annotated.append(draw_annotations(img, lbl_path, class_names, task))
 
     grid = make_grid(annotated, cols=args.cols)
 
-    # Scale down if grid exceeds the requested max width
     max_w = args.width
     if grid.shape[1] > max_w:
         scale = max_w / grid.shape[1]
