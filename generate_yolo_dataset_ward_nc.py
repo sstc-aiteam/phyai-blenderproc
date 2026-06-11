@@ -15,18 +15,28 @@ OUTPUT_DIR     = "yolo_dataset"
 # (name_pattern, yolo_class_id, bproc_cat_id, apply_z_flip)
 TARGETS = [
     ("disposable_mask",         0, 1, True),
-    ("waterproof_bandages_ppb", 1, 2, True),
-    ("ac_remotecontrol",        2, 3, True),
-    ("syringe_nipro",           3, 4, True),
-    ("cotton_swabs_ppb",        4, 5, True),
-    ("paracetamol",             5, 6, True),
-    ("bottle_alcohol_spray",    6, 7, False),
+    ("disposable_mask_noband",  0, 2, True),  # unique cat_id so each object gets its own segmentation region
+    ("waterproof_bandages_ppb", 1, 3, True),
+    ("ac_remotecontrol",        2, 4, True),
+    ("syringe_nipro",           3, 5, True),
+    ("cotton_swabs",            4, 6, True),
+    ("cotton_swabs_pp",         5, 7, True),
+    ("paracetamol",             6, 8, True),
+    ("bottle_alcohol_spray",    7, 9, False),
 ]
 
-CLASS_NAMES = [t[0] for t in TARGETS]
+# Build class name list from unique yolo_ids in TARGETS order.
+# Multiple targets can share a yolo_id (e.g. disposable_mask and
+# disposable_mask_noband are both class 0); only the first name is kept.
+_seen_ids: set[int] = set()
+CLASS_NAMES: list[str] = []
+for _name, _yolo_id, *_ in TARGETS:
+    if _yolo_id not in _seen_ids:
+        _seen_ids.add(_yolo_id)
+        CLASS_NAMES.append(_name)
 
-IMAGE_WIDTH     = 640
-IMAGE_HEIGHT    = 640
+IMAGE_WIDTH     = 720
+IMAGE_HEIGHT    = 720
 RENDER_SAMPLES  = 128
 
 # Camera: 3 distances × (3 elevations × 6 azimuths + 6 near-zenith) = 3 × 24 = 82 poses per orientation
@@ -165,7 +175,7 @@ def main():
     # ── Find and configure all target objects ─────────────────────────────────
     target_data = {}
     for tname, yolo_id, cat_id, do_z_flip in TARGETS:
-        objs = [o for o in all_objs if tname.lower() in o.get_name().lower()]
+        objs = [o for o in all_objs if tname.lower() == o.get_name().lower()]
         if not objs:
             raise RuntimeError(
                 f"No object matching '{tname}' found in {SCENE_GLB_PATH}.\n"
