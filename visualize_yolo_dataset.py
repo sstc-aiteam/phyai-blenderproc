@@ -43,15 +43,18 @@ def class_color(cls_id: int) -> tuple[int, int, int]:
 
 
 def load_dataset_meta(dataset_dir: Path) -> tuple[list[str], str]:
-    """Return (class_names, task) from dataset.yaml. task defaults to 'detect'."""
-    yaml_path = dataset_dir / "dataset.yaml"
-    with open(yaml_path) as f:
-        data = yaml.safe_load(f)
-    return data.get("names", []), data.get("task", "detect")
+    """Return (class_names, task) from dataset.yaml or data.yaml. task defaults to 'detect'."""
+    for name in ("dataset.yaml", "data.yaml"):
+        yaml_path = dataset_dir / name
+        if yaml_path.exists():
+            with open(yaml_path) as f:
+                data = yaml.safe_load(f)
+            return data.get("names", []), data.get("task", "detect")
+    raise FileNotFoundError(f"No dataset.yaml or data.yaml found in {dataset_dir}")
 
 
 def draw_annotations(img: np.ndarray, label_path: Path,
-                     class_names: list[str], task: str) -> np.ndarray:
+                     class_names: list[str]) -> np.ndarray:
     H, W = img.shape[:2]
     img = img.copy()
 
@@ -69,7 +72,9 @@ def draw_annotations(img: np.ndarray, label_path: Path,
         color  = class_color(cls_id)
         label  = class_names[cls_id] if cls_id < len(class_names) else str(cls_id)
 
-        if task == "segment" and len(parts) > 5:
+        # Treat as segment when task says so OR when the line has polygon points
+        # (handles datasets whose YAML omits the task field but use seg labels)
+        if len(parts) > 5:
             coords = list(map(float, parts[1:]))
             pts = np.array(coords, dtype=np.float32).reshape(-1, 2)
             pts[:, 0] *= W
@@ -111,15 +116,40 @@ def _draw_label(img: np.ndarray, label: str, x: int, y: int,
     cv2.putText(img, label, (x + 2, ty), FONT, FONT_SCALE, TEXT_COLOR, THICKNESS, cv2.LINE_AA)
 
 
+def _resolve_img_lbl_dirs(dataset_dir: Path, split: str) -> tuple[Path, Path] | None:
+    """Return (img_dir, lbl_dir) for a split, trying both known layouts."""
+    # Layout A: images/{split}/ labels/{split}/  (synthetic datasets)
+    a_img = dataset_dir / "images" / split
+    a_lbl = dataset_dir / "labels" / split
+    if a_img.exists():
+        return a_img, a_lbl
+    # Layout B: {split}/images/  {split}/labels/  (Roboflow exports)
+    b_img = dataset_dir / split / "images"
+    b_lbl = dataset_dir / split / "labels"
+    if b_img.exists():
+        return b_img, b_lbl
+    return None
+
+
 def collect_pairs(dataset_dir: Path, split: str | None) -> list[tuple[Path, Path]]:
-    splits = [split] if split else ["train", "val"]
+    if split:
+        # Also accept "val" as an alias for "valid" and vice versa
+        candidates = [split, "valid" if split == "val" else "val"] if split in ("val", "valid") else [split]
+    else:
+        candidates = ["train", "val", "valid"]
+    seen_splits: set[str] = set()
     pairs = []
-    for s in splits:
-        img_dir = dataset_dir / "images" / s
-        lbl_dir = dataset_dir / "labels" / s
-        if not img_dir.exists():
+    for s in candidates:
+        if s in seen_splits:
             continue
-        for img_path in sorted(img_dir.glob("*.jpg")):
+        dirs = _resolve_img_lbl_dirs(dataset_dir, s)
+        if dirs is None:
+            continue
+        seen_splits.add(s)
+        img_dir, lbl_dir = dirs
+        for img_path in sorted(img_dir.glob("*")):
+            if img_path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+                continue
             lbl_path = lbl_dir / img_path.with_suffix(".txt").name
             pairs.append((img_path, lbl_path))
     return pairs
@@ -138,7 +168,7 @@ def make_grid(images: list[np.ndarray], cols: int = 4) -> np.ndarray:
 def main():
     parser = argparse.ArgumentParser(description="Visualize YOLO dataset annotations")
     parser.add_argument("--dataset", type=Path, default=DATASET_DIR)
-    parser.add_argument("--split",   choices=["train", "val"], default=None)
+    parser.add_argument("--split",   choices=["train", "val", "valid"], default=None)
     parser.add_argument("--n",       type=int, default=16, help="number of images in grid")
     parser.add_argument("--save",    type=Path, nargs="?", const=VISUALIZE_OUT_DIR,
                         default=None, help="output directory (default: yolo_dataset_vis_out)")
@@ -156,7 +186,7 @@ def main():
 
     if args.image:
         # Resolve the image: accept an absolute path, a relative path from CWD,
-        # or a bare filename searched under images/{train,val}/
+        # or a bare filename searched anywhere under the dataset directory.
         img_path = Path(args.image)
         if not img_path.is_absolute():
             candidate = args.dataset / "images" / img_path
@@ -168,12 +198,19 @@ def main():
                     print(f"Image not found: {args.image}")
                     return
                 img_path = matches[0]
-        lbl_path = args.dataset / "labels" / img_path.parent.name / img_path.with_suffix(".txt").name
+        # Derive label path for both layout styles.
+        # Layout A: .../images/{split}/foo.jpg  → .../labels/{split}/foo.txt
+        # Layout B: .../{split}/images/foo.jpg  → .../{split}/labels/foo.txt
+        parent = img_path.parent
+        if parent.name == "images":
+            lbl_path = parent.parent / "labels" / img_path.with_suffix(".txt").name
+        else:
+            lbl_path = args.dataset / "labels" / parent.name / img_path.with_suffix(".txt").name
         img = cv2.imread(str(img_path))
         if img is None:
             print(f"Could not read image: {img_path}")
             return
-        vis = draw_annotations(img, lbl_path, class_names, task)
+        vis = draw_annotations(img, lbl_path, class_names)
         if args.save:
             args.save.mkdir(parents=True, exist_ok=True)
             out = args.save / img_path.name
@@ -208,7 +245,7 @@ def main():
             img = cv2.imread(str(img_path))
             if img is None:
                 continue
-            vis = draw_annotations(img, lbl_path, class_names, task)
+            vis = draw_annotations(img, lbl_path, class_names)
             out = save_dir / f"{img_path.parent.name}_{img_path.name}"
             cv2.imwrite(str(out), vis)
 
@@ -222,7 +259,7 @@ def main():
         img = cv2.imread(str(img_path))
         if img is None:
             continue
-        annotated.append(draw_annotations(img, lbl_path, class_names, task))
+        annotated.append(draw_annotations(img, lbl_path, class_names))
 
     grid = make_grid(annotated, cols=args.cols)
 
